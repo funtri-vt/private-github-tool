@@ -1,0 +1,13 @@
+name = "git-proxy-worker"
+main = "src/index.js"
+compatibility_date = "2024-01-01"
+
+# Environment variables (non-sensitive)
+[vars]
+REPO_NAME = "your-repo-name"
+
+# D1 Database binding for request logging
+[[d1_databases]]
+binding = "DB"
+database_name = "git_proxy_logs"
+database_id = "YOUR_D1_DATABASE_ID"
