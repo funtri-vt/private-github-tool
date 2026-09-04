@@ -1,0 +1,19 @@
+# Dependencies
+node_modules/
+
+# Cloudflare Wrangler
+.wrangler/
+.dev.vars
+
+# Build Outputs
+dist/
+build/
+
+# Environment Variables (Secrets)
+.env
+.env.*
+!.env.example
+
+# Logs
+pnpm-debug.log*
+npm-debug.log*
