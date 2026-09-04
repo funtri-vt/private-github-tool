@@ -1,10 +1,8 @@
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
-    // Normalize path: collapse multiple slashes and strip trailing slash
     const path = url.pathname.replace(/\/+/g, '/').replace(/\/$/, '') || '/';
 
-    // 1. Serve Dashboard Web Page (GET / or GET /dashboard)
     if (request.method === 'GET' && (path === '/' || path === '/dashboard')) {
       return new Response(renderDashboardHTML(), {
         headers: {
@@ -16,13 +14,11 @@ export default {
       });
     }
 
-    // 2. Dashboard Analytics API (GET /api/logs)
     if (request.method === 'GET' && path === '/api/logs') {
       const authHeader = request.headers.get('Authorization') || '';
       const token = authHeader.replace(/^Bearer\s+/i, '').trim();
       const [providedUser, providedHash] = token.includes(':') ? token.split(':', 2) : ['', token];
 
-      // Trim whitespace/newlines and force lowercase for hashes
       const expectedUser = (env.ADMIN_USER || 'admin').trim();
       const expectedPass = (env.ADMIN_PASS_HASH || env.AUTH_HASH || '').trim().toLowerCase();
 
@@ -61,21 +57,19 @@ export default {
           headers: getSecurityHeaders(),
         });
       } catch (err) {
-        return new Response(JSON.stringify({ error: 'Database query failed' }), {
+        return new Response(JSON.stringify({ error: 'Database query failed', details: err.message }), {
           status: 500,
           headers: getSecurityHeaders(),
         });
       }
     }
 
-    // 3. CLI Token Generation Request (POST /token)
     if (request.method === 'POST' && path === '/token') {
       const clientIP = request.headers.get('cf-connecting-ip') || 'Unknown';
 
       try {
         const { action, auth } = await request.json();
 
-        // Trim whitespace/newlines and force lowercase for token hash check
         const expectedAuth = (env.AUTH_HASH || '').trim().toLowerCase();
         const isValidAuth = await timingSafeEqual((auth || '').trim().toLowerCase(), expectedAuth);
 
@@ -108,8 +102,9 @@ export default {
         );
 
         if (!ghResponse.ok) {
+          const errData = await ghResponse.text();
           await logAccess(env.DB, clientIP, action, false);
-          return new Response(JSON.stringify({ error: 'GitHub Authentication Failed' }), {
+          return new Response(JSON.stringify({ error: 'GitHub Authentication Failed', details: errData }), {
             status: 502,
             headers: getSecurityHeaders(),
           });
@@ -123,7 +118,8 @@ export default {
           headers: getSecurityHeaders(),
         });
       } catch (err) {
-        return new Response(JSON.stringify({ error: 'Internal Server Error' }), {
+        // EXPOSING THE ERROR MESSAGE HERE SO WE CAN DIAGNOSE IT
+        return new Response(JSON.stringify({ error: 'Internal Server Error', details: err.message }), {
           status: 500,
           headers: getSecurityHeaders(),
         });
@@ -145,42 +141,63 @@ function getSecurityHeaders() {
   };
 }
 
+// Updated to manual constant-time XOR to avoid Missing Web Crypto Method bugs
 async function timingSafeEqual(a, b) {
   if (typeof a !== 'string' || typeof b !== 'string') return false;
   const enc = new TextEncoder();
   const bufA = enc.encode(a);
   const bufB = enc.encode(b);
   if (bufA.byteLength !== bufB.byteLength) return false;
-  return crypto.subtle.timingSafeEqual(bufA, bufB);
+
+  let result = 0;
+  for (let i = 0; i < bufA.byteLength; i++) {
+    result |= bufA[i] ^ bufB[i];
+  }
+  return result === 0;
 }
 
 async function logAccess(db, ip, action, success) {
   if (!db) return;
   try {
     await db
-      .prepare('INSERT INTO access_logs (ip, action, success, timestamp) VALUES (?, ?, ?, ?)')
-      .bind(ip, action, success ? 1 : 0, new Date().toISOString())
-      .run();
+    .prepare('INSERT INTO access_logs (ip, action, success, timestamp) VALUES (?, ?, ?, ?)')
+    .bind(ip, action, success ? 1 : 0, new Date().toISOString())
+    .run();
   } catch (e) {
     console.error('Database logging failed:', e);
   }
 }
 
 async function generateJWT(appId, pemKey) {
+  if (!appId || !pemKey) {
+    throw new Error('Missing GITHUB_APP_ID or GITHUB_PRIVATE_KEY environment variables.');
+  }
+
+  // Bulletproof cleaning: Strips headers (PKCS#1 and PKCS#8) and ALL non-base64 characters (including literal '\n')
   const cleanPem = pemKey
-    .replace(/-----BEGIN PRIVATE KEY-----/, '')
-    .replace(/-----END PRIVATE KEY-----/, '')
-    .replace(/\s+/g, '');
+  .replace(/-----BEGIN (RSA )?PRIVATE KEY-----/g, '')
+  .replace(/-----END (RSA )?PRIVATE KEY-----/g, '')
+  .replace(/[^A-Za-z0-9+/=]/g, '');
 
-  const binaryDer = Uint8Array.from(atob(cleanPem), (c) => c.charCodeAt(0));
+  let binaryDer;
+  try {
+    binaryDer = Uint8Array.from(atob(cleanPem), (c) => c.charCodeAt(0));
+  } catch (e) {
+    throw new Error('Failed to base64-decode the private key. Check formatting.');
+  }
 
-  const privateKey = await crypto.subtle.importKey(
-    'pkcs8',
-    binaryDer,
-    { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' },
-    false,
-    ['sign']
-  );
+  let privateKey;
+  try {
+    privateKey = await crypto.subtle.importKey(
+      'pkcs8',
+      binaryDer,
+      { name: 'RSASSA-PKCS1-v1_5', hash: { name: 'SHA-256' } },
+      false,
+      ['sign']
+    );
+  } catch (e) {
+    throw new Error('Key import failed. Ensure your GitHub key is converted to PKCS#8 format. Native error: ' + e.message);
+  }
 
   const now = Math.floor(Date.now() / 1000);
   const header = base64UrlEncode(JSON.stringify({ alg: 'RS256', typ: 'JWT' }));
