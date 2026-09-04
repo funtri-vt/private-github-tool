@@ -1,0 +1,7 @@
+CREATE TABLE IF NOT EXISTS access_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ip TEXT NOT NULL,
+    action TEXT NOT NULL,
+    success INTEGER NOT NULL,
+    timestamp TEXT NOT NULL
+);
