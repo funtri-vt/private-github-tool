@@ -1,9 +1,11 @@
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
+    // Normalize path: collapse multiple slashes and strip trailing slash
+    const path = url.pathname.replace(/\/+/g, '/').replace(/\/$/, '') || '/';
 
     // 1. Serve Dashboard Web Page (GET / or GET /dashboard)
-    if (request.method === 'GET' && (url.pathname === '/' || url.pathname === '/dashboard')) {
+    if (request.method === 'GET' && (path === '/' || path === '/dashboard')) {
       return new Response(renderDashboardHTML(), {
         headers: {
           'Content-Type': 'text/html; charset=utf-8',
@@ -15,14 +17,17 @@ export default {
     }
 
     // 2. Dashboard Analytics API (GET /api/logs)
-    if (request.method === 'GET' && url.pathname === '/api/logs') {
+    if (request.method === 'GET' && path === '/api/logs') {
       const authHeader = request.headers.get('Authorization') || '';
-      
       const token = authHeader.replace(/^Bearer\s+/i, '').trim();
       const [providedUser, providedHash] = token.includes(':') ? token.split(':', 2) : ['', token];
 
-      const validUser = await timingSafeEqual(providedUser, env.ADMIN_USER || 'admin');
-      const validPass = await timingSafeEqual(providedHash, env.ADMIN_PASS_HASH || env.AUTH_HASH);
+      // Trim whitespace/newlines and force lowercase for hashes
+      const expectedUser = (env.ADMIN_USER || 'admin').trim();
+      const expectedPass = (env.ADMIN_PASS_HASH || env.AUTH_HASH || '').trim().toLowerCase();
+
+      const validUser = await timingSafeEqual(providedUser.trim(), expectedUser);
+      const validPass = await timingSafeEqual(providedHash.trim().toLowerCase(), expectedPass);
 
       if (!validUser || !validPass) {
         return new Response(JSON.stringify({ error: 'Unauthorized' }), {
@@ -64,13 +69,15 @@ export default {
     }
 
     // 3. CLI Token Generation Request (POST /token)
-    if (request.method === 'POST' && url.pathname === '/token') {
+    if (request.method === 'POST' && path === '/token') {
       const clientIP = request.headers.get('cf-connecting-ip') || 'Unknown';
 
       try {
         const { action, auth } = await request.json();
 
-        const isValidAuth = await timingSafeEqual(auth || '', env.AUTH_HASH);
+        // Trim whitespace/newlines and force lowercase for token hash check
+        const expectedAuth = (env.AUTH_HASH || '').trim().toLowerCase();
+        const isValidAuth = await timingSafeEqual((auth || '').trim().toLowerCase(), expectedAuth);
 
         if (!isValidAuth) {
           await logAccess(env.DB, clientIP, action || 'unknown', false);
