@@ -5,12 +5,11 @@ import json
 import os
 import subprocess
 import sys
-from urllib.request import Request, urlopen
 from urllib.error import HTTPError
+from urllib.request import Request, urlopen
 
 # =========================================================
 # PORTABLE CONFIGURATION
-# Modify these values directly in the source code before deployment
 # =========================================================
 WORKER_URL = "https://your-worker.your-subdomain.workers.dev"
 REPO_OWNER = "your-github-username"
@@ -24,9 +23,10 @@ def get_auth_hash():
 
 
 def fetch_token(action, password_hash):
+    base_url = WORKER_URL.rstrip("/")
     payload = json.dumps({"action": action, "auth": password_hash}).encode("utf-8")
     req = Request(
-        f"{WORKER_URL}/token",
+        f"{base_url}/token",
         data=payload,
         headers={"Content-Type": "application/json"},
         method="POST",

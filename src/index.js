@@ -18,7 +18,6 @@ export default {
     if (request.method === 'GET' && url.pathname === '/api/logs') {
       const authHeader = request.headers.get('Authorization') || '';
       
-      // Extract credentials from Bearer token format (user:hash or token)
       const token = authHeader.replace(/^Bearer\s+/i, '').trim();
       const [providedUser, providedHash] = token.includes(':') ? token.split(':', 2) : ['', token];
 
@@ -64,14 +63,13 @@ export default {
       }
     }
 
-    // 3. CLI Token Generation Request (POST /)
-    if (request.method === 'POST') {
+    // 3. CLI Token Generation Request (POST /token)
+    if (request.method === 'POST' && url.pathname === '/token') {
       const clientIP = request.headers.get('cf-connecting-ip') || 'Unknown';
 
       try {
         const { action, auth } = await request.json();
 
-        // Constant-time hash check
         const isValidAuth = await timingSafeEqual(auth || '', env.AUTH_HASH);
 
         if (!isValidAuth) {
